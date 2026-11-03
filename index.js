@@ -27,25 +27,38 @@ connectDB();
 const app = express();
 const httpServer = createServer(app);
 
-// ── CORS Configuration (Fixes CORS Error completely) ────────────────────────
-app.use(
-  cors({
-    origin: ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
-  }),
-);
+// ── Production Dynamic CORS Setup ──────────────────────────────────────────
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:3000",
+  process.env.CLIENT_URL, // Render Frontend URL add cheyyaan (.env file-il)
+].filter(Boolean);
 
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, postman) or matched allowed origins
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== "production") {
+      callback(null, true);
+    } else {
+      callback(null, true); // production deploy test scalable custom origins allow cheyyan
+    }
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Serve uploaded static files
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-// ── Socket.io setup ──────────────────────────────────────────────────────────
+// ── Socket.io Setup ──────────────────────────────────────────────────────────
 export const io = new Server(httpServer, {
   cors: {
-    origin: ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"],
+    origin: "*", // Render deployments integration issue avoidable cross-origin handle
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -81,7 +94,7 @@ io.on("connection", (socket) => {
   });
 });
 
-// Health check
+// Health check endpoint
 app.get("/", (req, res) => {
   res.json({ message: "BiteBeam API is running 🚀" });
 });
@@ -106,9 +119,10 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: err.message || "Internal Server Error" });
 });
 
+// Dynamic Port setup for Render deployment
 const PORT = process.env.PORT || 5000;
 
 httpServer.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🔌 Socket.io ready`);
 });
