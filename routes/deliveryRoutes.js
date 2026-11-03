@@ -5,6 +5,7 @@ import {
   getDeliveryOrderDetail,
   acceptOrder,
   updateDeliveryStatus,
+  collectPayment,
   updateLiveLocation,
 } from "../controllers/deliveryController.js";
 import { protect, authorize } from "../middleware/authMiddleware.js";
@@ -28,6 +29,9 @@ router.put("/order/:id/accept", authorize("delivery"), acceptOrder);
 
 // Update delivery status (picked_up, out_for_delivery, delivered)
 router.put("/order/:id/delivery-status", authorize("delivery", "admin"), updateDeliveryStatus);
+
+// Collect payment after delivery (UPI QR or Cash)
+router.put("/order/:id/collect-payment", authorize("delivery", "admin"), collectPayment);
 
 // Update live GPS location
 router.put("/order/:id/location", authorize("delivery", "admin"), updateLiveLocation);

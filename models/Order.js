@@ -30,24 +30,57 @@ const orderSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+
+    // ── Order Status — includes ALL states used by frontend + backend ──────
     status: {
       type: String,
-      enum: ["confirmed", "preparing", "ready_for_pickup", "picked_up", "out_for_delivery", "delivered", "cancelled"],
+      enum: [
+        "confirmed",
+        "preparing",
+        "ready_for_pickup",
+        "picked_up",
+        "out_for_delivery",
+        "on_the_way",      // alias used by some frontend views
+        "delivered",
+        "cancelled",
+      ],
       default: "confirmed",
     },
+
     deliveryAddress: {
       type: String,
       default: "Kannur, Kerala, India",
     },
+    deliveryLat: { type: Number, default: null },
+    deliveryLng: { type: Number, default: null },
+
+    // ── Payment ───────────────────────────────────────────────────────────
     paymentMethod: {
       type: String,
+      enum: ["Online UPI", "Cash on Delivery", "Online Payment", "UPI QR"],
       default: "Online Payment",
     },
+    paymentStatus: {
+      type: String,
+      enum: ["pending", "paid", "failed", "refunded"],
+      default: "pending",
+    },
+    paymentCollectedBy: {
+      type: String,
+      enum: ["customer", "delivery_partner", ""],
+      default: "",
+    },
+    paymentCompletedAt: {
+      type: Date,
+      default: null,
+    },
+
     estimatedDelivery: {
       type: String,
       default: "30-40 mins",
     },
-    // ── Delivery Partner fields ────────────────────────────────────────────────
+
+    // ── Delivery Partner fields ────────────────────────────────────────────
     deliveryPartnerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -65,6 +98,10 @@ const orderSchema = new mongoose.Schema(
     currentLatLng: {
       lat: { type: Number, default: null },
       lng: { type: Number, default: null },
+    },
+    deliveredAt: {
+      type: Date,
+      default: null,
     },
   },
   {

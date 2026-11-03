@@ -55,7 +55,6 @@ export const getDeliveryOrderDetail = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    // Delivery partner can only see orders assigned to them
     if (
       req.user.role === "delivery" &&
       order.deliveryPartnerId?.toString() !== req.user._id.toString()
@@ -109,7 +108,7 @@ export const acceptOrder = async (req, res) => {
       acceptedBy: req.user._id,
     });
 
-    // Notify other delivery partners that this order has been accepted
+    // Notify other delivery partners that this order has been claimed
     io.to("delivery_partners").emit("order_claimed", {
       orderId: order._id,
       claimedBy: req.user._id,
@@ -123,6 +122,7 @@ export const acceptOrder = async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // @desc    Update delivery status (picked_up / out_for_delivery / delivered)
+//          Also syncs main order.status so customer tracking page is accurate
 // @route   PUT /api/delivery/order/:id/delivery-status
 // @access  Private (delivery, admin)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,7 +138,6 @@ export const updateDeliveryStatus = async (req, res) => {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    // Only the assigned delivery partner or admin can update
     if (
       req.user.role === "delivery" &&
       order.deliveryPartnerId?.toString() !== req.user._id.toString()
@@ -148,11 +147,12 @@ export const updateDeliveryStatus = async (req, res) => {
 
     order.deliveryStatus = deliveryStatus;
 
-    // Map delivery status → main order status
+    // ── Map deliveryStatus → main order status (all values now in schema enum)
     const statusMap = {
-      picked_up: "on_the_way",
-      out_for_delivery: "on_the_way",
-      delivered: "delivered",
+      assigned:         "confirmed",
+      picked_up:        "picked_up",
+      out_for_delivery: "out_for_delivery",
+      delivered:        "delivered",
     };
     if (statusMap[deliveryStatus]) {
       order.status = statusMap[deliveryStatus];
@@ -163,22 +163,82 @@ export const updateDeliveryStatus = async (req, res) => {
       order.estimatedDelivery = estimatedDeliveryTime;
     }
 
+    if (deliveryStatus === "delivered") {
+      order.deliveredAt = new Date();
+    }
+
     await order.save();
 
-    // Friendly status messages for real-time notification
+    // Customer-friendly messages
     const messageMap = {
-      picked_up: "🛵 Your order has been picked up and is on its way!",
-      out_for_delivery: "🚀 Your order is out for delivery!",
-      delivered: "✅ Your order has been delivered. Enjoy your meal!",
+      picked_up:        "🛵 Your order has been picked up and is on its way!",
+      out_for_delivery: "🚀 Your order is out for delivery — almost there!",
+      delivered:        "✅ Your order has been delivered. Enjoy your meal!",
     };
 
-    // Emit real-time notification to customer watching this order
+    // Emit real-time update to customer watching this order
     io.to(`order_${order._id}`).emit("order_status_changed", {
       orderId: order._id,
       status: order.status,
       deliveryStatus,
       estimatedDeliveryTime: order.estimatedDeliveryTime,
-      message: messageMap[deliveryStatus] || `Order status updated to ${deliveryStatus}`,
+      message: messageMap[deliveryStatus] || `Status updated to ${deliveryStatus}`,
+    });
+
+    res.json(order);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// @desc    Confirm payment collection after delivery
+//          Records payment method (UPI QR or Cash) and marks order as paid
+// @route   PUT /api/delivery/order/:id/collect-payment
+// @access  Private (delivery, admin)
+// ─────────────────────────────────────────────────────────────────────────────
+export const collectPayment = async (req, res) => {
+  try {
+    const { paymentMethod, paymentCollectedBy } = req.body;
+    // paymentMethod: "UPI QR" | "Cash on Delivery"
+    // paymentCollectedBy: "customer" (online) | "delivery_partner" (cash)
+
+    const validMethods = ["UPI QR", "Cash on Delivery", "Online UPI", "Online Payment"];
+    if (!validMethods.includes(paymentMethod)) {
+      return res.status(400).json({ message: "Invalid payment method" });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    if (
+      req.user.role === "delivery" &&
+      order.deliveryPartnerId?.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    // Record payment details
+    order.paymentMethod = paymentMethod;
+    order.paymentStatus = "paid";
+    order.paymentCollectedBy = paymentCollectedBy || "delivery_partner";
+    order.paymentCompletedAt = new Date();
+
+    // Ensure order is marked delivered
+    order.deliveryStatus = "delivered";
+    order.status = "delivered";
+    if (!order.deliveredAt) order.deliveredAt = new Date();
+
+    await order.save();
+
+    // Notify customer of payment + delivery completion
+    io.to(`order_${order._id}`).emit("order_status_changed", {
+      orderId: order._id,
+      status: "delivered",
+      deliveryStatus: "delivered",
+      paymentStatus: "paid",
+      paymentMethod,
+      message: `✅ Payment ${paymentMethod === "Cash on Delivery" ? "collected in cash" : "confirmed via UPI"}. Order delivered!`,
     });
 
     res.json(order);
@@ -208,7 +268,6 @@ export const updateLiveLocation = async (req, res) => {
 
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    // Also broadcast via socket for instant update (REST is a backup persist)
     io.to(`order_${order._id}`).emit("location_updated", {
       lat,
       lng,
